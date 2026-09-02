@@ -41,9 +41,13 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
 exclude = ["frontend", ".venv", "uv.lock"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ASYNC109", "ASYNC110"]
+"tests/**/conftest.py" = ["ASYNC109", "ASYNC110"]

@@ -37,9 +37,7 @@ class ProviderError(VoxFlowError):
 
 
 class ProviderUnavailableError(ProviderError):
-    def __init__(
-        self, provider: str, message: str = "provider not configured or unreachable", **context: Any
-    ) -> None:
+    def __init__(self, provider: str, message: str = "provider not configured or unreachable", **context: Any) -> None:
         super().__init__(message, provider=provider, retryable=False, **context)
 
 
@@ -74,9 +72,16 @@ class SessionClosedError(VoxFlowError):
 
 
 class StateViolationError(VoxFlowError):
-    def __init__(self, from_state: str, to_state: str, *, session_id: str | None = None) -> None:
+    def __init__(
+        self,
+        from_state: str,
+        to_state: str,
+        *,
+        session_id: str | None = None,
+        reason: str | None = None,
+    ) -> None:
         super().__init__(
-            f"invalid state transition {from_state!r} -> {to_state!r}",
+            f"invalid state transition {from_state!r} -> {to_state!r}" + (f" ({reason})" if reason else ""),
             code="STATE_VIOLATION",
             from_state=from_state,
             to_state=to_state,
@@ -85,9 +90,7 @@ class StateViolationError(VoxFlowError):
 
 
 class StaleTurnError(VoxFlowError):
-    def __init__(
-        self, turn_id: int, current_turn_id: int, *, session_id: str | None = None
-    ) -> None:
+    def __init__(self, turn_id: int, current_turn_id: int, *, session_id: str | None = None) -> None:
         super().__init__(
             f"stale result from turn {turn_id} rejected (current turn is {current_turn_id})",
             code="STALE_TURN",

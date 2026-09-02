@@ -21,9 +21,7 @@ _LOG_LEVELS = {
 _configured = False
 
 
-def setup_logging(
-    level: str = "INFO", *, json_output: bool | None = None, force: bool = False
-) -> None:
+def setup_logging(level: str = "INFO", *, json_output: bool | None = None, force: bool = False) -> None:
     """Configure structlog once per process.
 
     Console output is the default for local development; JSON line output is used
@@ -42,7 +40,6 @@ def setup_logging(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.stdlib.add_log_level,
-            structlog.stdlib.add_logger_name,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
@@ -60,9 +57,7 @@ def get_logger(name: str | None = None) -> Any:
     return structlog.get_logger(name or "voxflow")
 
 
-def log_event(
-    event: VoiceEvent, message: str | None = None, *, level: str = "info", **extra: Any
-) -> None:
+def log_event(event: VoiceEvent, message: str | None = None, *, level: str = "info", **extra: Any) -> None:
     """Emit a structured log line for a runtime event.
 
     Every log line carries the correlation fields required for debugging

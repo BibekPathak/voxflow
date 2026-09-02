@@ -165,6 +165,7 @@ class RuntimeStateChanged(VoiceEvent):
     type: EventType = EventType.RUNTIME_STATE_CHANGED
     from_state: str | None = None
     to_state: str
+    reason: str | None = None
 
 
 class ErrorEvent(VoiceEvent):
