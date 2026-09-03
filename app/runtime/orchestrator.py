@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from app.audio.gateway import AudioGateway
 from app.config import Settings
-from app.observability.logging import log_event
+from app.observability.logging import get_logger, log_event
+from app.providers.factory import ProviderSet, build_providers
+from app.providers.types import AudioData, Transcript
 from app.runtime.cancellation import CancellationScope, TurnCancelled
 from app.runtime.errors import StateViolationError
 from app.runtime.event_bus import EventBus, EventSubscription
@@ -16,13 +20,26 @@ from app.runtime.events import (
     RuntimeStateChanged,
     SpeechEnded,
     SpeechStarted,
+    TranscriptFinal,
+    TranscriptPartial,
+    TTSAudio,
     TurnCompleted,
     TurnStarted,
     UserInterrupted,
     VoiceEvent,
 )
+from app.runtime.pipeline import StreamingTurnPipeline
 from app.runtime.state_machine import RuntimeState, StateMachine
 from app.runtime.turn import TurnDetector, TurnDetectorParams
+
+_logger = get_logger("voxflow.runtime")
+
+
+class _SttEnd:
+    pass
+
+
+_STT_END = _SttEnd()
 
 
 class TurnContext:
@@ -49,15 +66,12 @@ class TurnPipeline(Protocol):
     async def handle(self, runtime: SessionRuntime, context: TurnContext) -> None: ...
 
 
-class NullPipeline:
-    """Placeholder pipeline used before providers are configured (Phase C).
+class AudioOutbound(Protocol):
+    """Full-duplex audio socket interface used to push agent audio to the browser."""
 
-    It runs the turn lifecycle (events + state) end to end without producing an
-    audible response, so the session can be exercised deterministically.
-    """
+    async def send_text(self, data: str) -> None: ...
 
-    async def handle(self, runtime: SessionRuntime, context: TurnContext) -> None:
-        return None
+    async def send_bytes(self, data: bytes) -> None: ...
 
 
 class SessionRuntime:
@@ -66,21 +80,31 @@ class SessionRuntime:
     Responsibilities:
 
     * own the session event bus and its state machine;
-    * ingest inbound PCM through the audio gateway and translate VAD decisions
-      into state transitions and barge-in handling;
-    * drive user-turn lifecycle (TurnStarted -> pipeline -> TurnCompleted) inside
-      a per-turn cancellation scope, so interruptions cancel cleanly;
+    * ingest inbound PCM through the audio gateway, forwarding it simultaneously
+      to the energy VAD (speech events + endpointing) and the streaming STT
+      provider (partial/final transcripts);
+    * drive user-turn lifecycle (TurnStarted -> LLM/TTS pipeline -> TurnCompleted)
+      inside a per-turn cancellation scope, so interruptions cancel cleanly;
+    * stream agent audio back to the browser with guard rails that prevent stale
+      audio from surviving an interruption;
     * expose the state snapshot the API/dashboard read.
 
     A session has one audio owner at a time. When the owner disconnects the
     runtime cancels in-flight work and transitions to CLOSED (terminal), which
-    prevents e.g. TTS from being started into a dead session.
+    prevents TTS from being started into a dead session.
     """
 
-    def __init__(self, session_id: str, conversation_id: str, settings: Settings) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        conversation_id: str,
+        settings: Settings,
+        providers: ProviderSet | None = None,
+    ) -> None:
         self.session_id = session_id
         self.conversation_id = conversation_id
         self.settings = settings
+        self.providers = providers if providers is not None else build_providers(settings)
 
         self.bus = EventBus(name=f"session:{session_id}", queue_maxsize=settings.audio_queue_maxsize)
         self.states = StateMachine(on_change=self._on_state_changed)
@@ -110,10 +134,11 @@ class SessionRuntime:
             event_types=self.detector.handles(),
         )
 
-        self.pipeline: TurnPipeline = NullPipeline()
+        self.pipeline: TurnPipeline = StreamingTurnPipeline()
 
         self.created_at = time.time()
         self._audio_owner: str | None = None
+        self._outbound: AudioOutbound | None = None
         self._closed = False
         self.turn_count = 0
         self.current_turn_id: int | None = None
@@ -121,6 +146,10 @@ class SessionRuntime:
         self._interrupted_active = False
         self._cancel_tasks: set[asyncio.Task[Any]] = set()
         self._last_error: dict[str, Any] | None = None
+        self._audio_seq = 0
+
+        self._stt_queue: asyncio.Queue[bytes | _SttEnd] | None = None
+        self._stt_task: asyncio.Task[None] | None = None
 
     @property
     def state(self) -> RuntimeState:
@@ -129,6 +158,10 @@ class SessionRuntime:
     @property
     def audio_connected(self) -> bool:
         return self._audio_owner is not None
+
+    @property
+    def active_scope(self) -> CancellationScope | None:
+        return self._active_scope
 
     def publish(self, event: VoiceEvent) -> None:
         self.bus.publish(event)
@@ -145,7 +178,8 @@ class SessionRuntime:
             )
         )
 
-    def attach(self, owner: str) -> bool:
+    # ------------------------------------------------------------------ audio
+    def attach(self, owner: str, outbound: AudioOutbound | None = None) -> bool:
         if self._closed:
             return False
         if self._audio_owner is not None and self._audio_owner != owner:
@@ -156,13 +190,16 @@ class SessionRuntime:
             except StateViolationError:
                 if self.states.state is not RuntimeState.LISTENING:
                     return False
+            self._start_stt()
         self._audio_owner = owner
+        self._outbound = outbound
         return True
 
     async def detach(self, owner: str) -> None:
         if self._audio_owner != owner:
             return
         self._audio_owner = None
+        self._outbound = None
         self._interrupted_active = False
         force_end = self.gateway.vad.force_end()
         if force_end is not None:
@@ -180,6 +217,7 @@ class SessionRuntime:
             return
         self._closed = True
         self._interrupted_active = False
+        await self._stop_stt()
         await self._cancel_active_scope()
         await self.detector.close()
         self._detector_sub.close()
@@ -191,10 +229,12 @@ class SessionRuntime:
     async def dispose(self, reason: str = "manager_shutdown") -> None:
         await self.close(reason)
         await self.bus.close()
+        await self.providers.close()
 
     async def ingest_audio(self, data: bytes, *, sequence: int | None = None) -> None:
         if self._closed:
             return
+        self._push_stt_audio(data)
         result = self.gateway.ingest_pcm(data, sequence=sequence)
         if result.num_samples == 0:
             return
@@ -211,6 +251,79 @@ class SessionRuntime:
         for decision in result.decisions:
             await self._handle_vad_decision(decision)
 
+    # -------------------------------------------------------------------- STT
+    def _start_stt(self) -> None:
+        if self._stt_task is not None:
+            return
+        self._stt_queue = asyncio.Queue()
+        self._stt_task = asyncio.create_task(self._stt_run(), name=f"stt-{self.session_id[:8]}")
+
+    async def _stop_stt(self) -> None:
+        task = self._stt_task
+        self._stt_task = None
+        self._stt_queue = None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    def _push_stt_audio(self, data: bytes) -> None:
+        queue = self._stt_queue
+        if queue is None or not data:
+            return
+        try:
+            queue.put_nowait(data)
+        except asyncio.QueueFull:
+            pass
+
+    async def _stt_run(self) -> None:
+        try:
+
+            async def audio_iter() -> AsyncIterator[bytes]:
+                while True:
+                    item = await self._stt_queue.get()  # type: ignore[union-attr]
+                    if isinstance(item, _SttEnd):
+                        return
+                    yield item
+
+            async for transcript in self.providers.stt.transcribe_stream(
+                audio_iter(),
+                sample_rate=self.gateway.sample_rate,
+                interim_results=True,
+            ):
+                await self._handle_stt_transcript(transcript)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if not self._closed:
+                _logger.warning("stt stream ended unexpectedly", error=str(exc), session_id=self.session_id)
+                self.publish(
+                    ErrorEvent(
+                        session_id=self.session_id,
+                        conversation_id=self.conversation_id,
+                        error=str(exc),
+                        stage="stt",
+                        exc_type=type(exc).__name__,
+                    )
+                )
+
+    async def _handle_stt_transcript(self, transcript: Transcript) -> None:
+        if not transcript.text.strip():
+            return
+        cls = TranscriptFinal if transcript.is_final else TranscriptPartial
+        self.publish(
+            cls(
+                session_id=self.session_id,
+                conversation_id=self.conversation_id,
+                turn_id=self.current_turn_id,
+                text=transcript.text,
+                words=transcript.words,
+                provider=self.settings.provider_stt,
+            )
+        )
+
+    # ------------------------------------------------------------------ VAD
     async def _handle_vad_decision(self, decision: Any) -> None:
         kind = decision.kind
         if kind == "speech_start":
@@ -270,6 +383,69 @@ class SessionRuntime:
             except StateViolationError:
                 pass
 
+    # ------------------------------------------------------------ agent audio
+    def is_audio_emittable(self, turn_id: int) -> bool:
+        if self._closed or self.current_turn_id != turn_id:
+            return False
+        return self.states.state in (RuntimeState.PROCESSING, RuntimeState.SPEAKING)
+
+    def _transition_speaking(self) -> bool:
+        try:
+            if self.states.state is RuntimeState.PROCESSING:
+                self.states.transition(RuntimeState.SPEAKING, reason="tts_first_audio")
+            return True
+        except StateViolationError:
+            return False
+
+    async def begin_agent_audio(self, turn_id: int) -> None:
+        self._transition_speaking()
+        if self._outbound is not None:
+            await self._outbound_safe_text(json.dumps({"type": "agent_audio.start", "turn_id": turn_id}))
+
+    async def end_agent_audio(self, turn_id: int, *, reason: str, started: bool) -> None:
+        if self._outbound is not None and started:
+            await self._outbound_safe_text(
+                json.dumps({"type": "agent_audio.end", "turn_id": turn_id, "reason": reason})
+            )
+
+    async def emit_agent_audio(self, turn_id: int, audio: AudioData) -> bool:
+        if not self.is_audio_emittable(turn_id):
+            return False
+        self._audio_seq += 1
+        self.publish(
+            TTSAudio(
+                session_id=self.session_id,
+                conversation_id=self.conversation_id,
+                turn_id=turn_id,
+                duration_ms=audio.duration_ms,
+                audio_bytes=len(audio.pcm),
+                sequence=self._audio_seq,
+                provider=self.settings.provider_tts,
+            )
+        )
+        if self._outbound is not None and audio.pcm:
+            await self._outbound_safe_bytes(audio.pcm)
+        return True
+
+    async def _outbound_safe_text(self, data: str) -> None:
+        outbound = self._outbound
+        if outbound is None or self._closed:
+            return
+        try:
+            await outbound.send_text(data)
+        except Exception as exc:
+            _logger.warning("outbound text failed", error=str(exc), session_id=self.session_id)
+
+    async def _outbound_safe_bytes(self, data: bytes) -> None:
+        outbound = self._outbound
+        if outbound is None or self._closed:
+            return
+        try:
+            await outbound.send_bytes(data)
+        except Exception as exc:
+            _logger.warning("outbound audio failed", error=str(exc), session_id=self.session_id)
+
+    # ------------------------------------------------------------------ turn
     async def _finalize_user_turn(self, text: str) -> None:
         if self._closed or self.states.state is not RuntimeState.LISTENING:
             return
@@ -311,7 +487,7 @@ class SessionRuntime:
             self._active_scope = None
             self.current_turn_id = None
             try:
-                if self.states.state is RuntimeState.PROCESSING:
+                if self.states.state in (RuntimeState.PROCESSING, RuntimeState.SPEAKING):
                     self.states.transition(RuntimeState.LISTENING, reason=f"turn:{turn_id}_complete")
             except StateViolationError:
                 pass

@@ -10,7 +10,7 @@ from app.runtime.events import (
 )
 from app.runtime.orchestrator import SessionRuntime, TurnContext
 from app.runtime.state_machine import RuntimeState
-from tests.conftest import make_settings
+from tests.conftest import make_noop_providers, make_settings
 from tests.unit.test_vad import silence_samples, tone_samples
 
 
@@ -48,7 +48,7 @@ async def test_attach_detach_lifecycle() -> None:
 
 async def test_barge_in_interrupts_speaking_and_returns_to_listening() -> None:
     settings = make_settings()
-    runtime = SessionRuntime("s1", "c1", settings)
+    runtime = SessionRuntime("s1", "c1", settings, providers=make_noop_providers())
     collector: list[VoiceEvent] = []
     runtime.bus.subscribe(lambda e: collector.append(e), session_id="s1")
 
@@ -98,7 +98,7 @@ async def test_barge_in_cancels_inflight_pipeline() -> None:
                 outcome["cancelled"] = True
                 raise
 
-    runtime = SessionRuntime("s1", "c1", make_settings())
+    runtime = SessionRuntime("s1", "c1", make_settings(), providers=make_noop_providers())
     runtime.pipeline = SlowPipeline()
     collector: list[VoiceEvent] = []
     runtime.bus.subscribe(lambda e: collector.append(e), session_id="s1")
@@ -133,7 +133,7 @@ async def test_disconnect_cancels_inflight_work() -> None:
                 outcome["cancelled"] = True
                 raise
 
-    runtime = SessionRuntime("s1", "c1", make_settings())
+    runtime = SessionRuntime("s1", "c1", make_settings(), providers=make_noop_providers())
     runtime.pipeline = SlowPipeline()
     collector: list[VoiceEvent] = []
     runtime.bus.subscribe(lambda e: collector.append(e), session_id="s1")

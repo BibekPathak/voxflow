@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from app.config import Settings
+from app.providers.factory import ProviderSet
+from app.providers.types import AudioData, LLMChunk, Transcript
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -21,3 +25,40 @@ def make_settings(**overrides: object) -> Settings:
     )
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
+
+
+class NoopSTTProvider:
+    async def transcribe_stream(
+        self,
+        audio: AsyncIterator[bytes],
+        *,
+        sample_rate: int = 16_000,
+        interim_results: bool = True,
+        language: str | None = None,
+    ) -> AsyncIterator[Transcript]:
+        del sample_rate, interim_results, language
+        async for _ in audio:
+            pass
+        if False:  # pragma: no cover
+            yield Transcript(text="")
+
+
+class NoopLLMProvider:
+    async def stream_chat(self, messages, *, tools=None, temperature=None) -> AsyncIterator[LLMChunk]:
+        del messages, tools, temperature
+        yield LLMChunk(finish_reason="stop")
+
+
+class NoopTTSProvider:
+    async def synthesize_stream(self, text, *, sample_rate: int = 16_000) -> AsyncIterator[AudioData]:
+        del text, sample_rate
+        if False:  # pragma: no cover
+            yield AudioData()
+
+    async def synthesize(self, text: str, *, sample_rate: int = 16_000) -> AudioData:
+        del text
+        return AudioData(sample_rate=sample_rate)
+
+
+def make_noop_providers() -> ProviderSet:
+    return ProviderSet(stt=NoopSTTProvider(), llm=NoopLLMProvider(), tts=NoopTTSProvider())
