@@ -1,0 +1,87 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --panel: #121a2f;
+  --panel-2: #0f1626;
+  --border: #223052;
+  --text: #e7ecf7;
+  --muted: #8a97b5;
+  --accent: #4f8cff;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --err: #f87171;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.shell { max-width: 1180px; margin: 0 auto; padding: 18px 20px 40px; }
+
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.brand { font-size: 20px; font-weight: 700; }
+.brand .sub { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 8px; }
+
+button {
+  border: 0; border-radius: 8px; padding: 9px 16px; font-weight: 600; cursor: pointer;
+  color: white; font-size: 13px;
+}
+button.primary { background: var(--accent); }
+button.primary:hover { background: #639bff; }
+button.danger { background: #b23c4e; }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.banner { border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; }
+.banner.error { background: rgba(248, 113, 113, 0.12); border: 1px solid var(--err); color: var(--err); }
+
+.grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.panel h2 { margin: 0 0 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.panel h2:not(:first-child) { margin-top: 18px; }
+
+.chat { max-height: 420px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.empty { color: var(--muted); text-align: center; padding: 24px 0; }
+.message { display: flex; flex-direction: column; padding: 8px 10px; border-radius: 10px; max-width: 95%; }
+.message.user { background: rgba(79, 140, 255, 0.16); align-self: flex-end; }
+.message.agent { background: var(--panel-2); align-self: flex-start; }
+.message .who { font-size: 10px; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+.message .text { white-space: pre-wrap; word-break: break-word; }
+.message .muted { color: var(--muted); }
+
+.state-row { display: flex; align-items: center; gap: 10px; }
+.state-pill { padding: 6px 14px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); font-weight: 700; font-size: 12px; }
+.state-pill.speaking { color: var(--ok); border-color: var(--ok); }
+.state-pill.listening, .state-pill.processing, .state-pill.thinking { color: var(--accent); }
+.state-pill.interrupted { color: var(--warn); border-color: var(--warn); }
+.mic { font-size: 10px; color: var(--muted); letter-spacing: 0.1em; }
+.mic.live { color: var(--ok); }
+
+.pipeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.stage { text-align: center; padding: 7px 2px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); font-size: 10px; font-weight: 700; }
+.stage.active { color: #0b1020; background: var(--ok); border-color: var(--ok); }
+
+.latency, .session-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.latency div, .session-meta div { background: var(--panel-2); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; }
+.latency span, .session-meta span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.latency b, .session-meta b { font-size: 15px; }
+.session-meta .id { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+
+.tools { grid-column: 1 / -1; }
+.tool { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; }
+.tool .name { font-weight: 600; font-family: ui-monospace, monospace; }
+.tool .status { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.tool.done .status { color: var(--ok); }
+.tool.failed .status { color: var(--err); }
+.tool.running .status { color: var(--warn); }
+.tool .duration { color: var(--muted); font-size: 12px; }
+.tool code { color: var(--muted); font-size: 11px; background: #0a0f1e; padding: 2px 6px; border-radius: 5px; }
+.tool .error-text { color: var(--err); font-size: 12px; }
+
+.foot { margin-top: 18px; color: var(--muted); font-size: 12px; text-align: center; }

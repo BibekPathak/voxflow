@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     log_level: str = "INFO"
     json_logs: bool = False
+    cors_origins: list[str] = ["*"]
 
     sample_rate: int = 16_000
     audio_frame_ms: int = 20
