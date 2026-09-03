@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.api.audio import router as audio_router
+from app.api.evaluations import router as evaluations_router
 from app.api.sessions import router as sessions_router
 from app.config import Settings, get_settings
 from app.memory.conversation import ConversationStore
@@ -28,6 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await store.create_tables()
         app.state.manager = SessionManager(settings, conversation_store=store)
         app.state.settings = settings
+        app.state.evaluation_runs = []
         yield
         await app.state.manager.close_all()
         if store is not None:
@@ -51,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(sessions_router)
     app.include_router(audio_router)
+    app.include_router(evaluations_router)
 
     return app
 
