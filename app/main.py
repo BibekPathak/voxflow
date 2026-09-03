@@ -10,6 +10,7 @@ from app import __version__
 from app.api.audio import router as audio_router
 from app.api.sessions import router as sessions_router
 from app.config import Settings, get_settings
+from app.memory.conversation import ConversationStore
 from app.observability.logging import setup_logging
 from app.runtime.errors import SessionNotFoundError, VoxFlowError
 from app.runtime.session import SessionManager
@@ -21,10 +22,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        app.state.manager = SessionManager(settings)
+        store: ConversationStore | None = None
+        if settings.persist_conversations:
+            store = ConversationStore(settings.database_url)
+            await store.create_tables()
+        app.state.manager = SessionManager(settings, conversation_store=store)
         app.state.settings = settings
         yield
         await app.state.manager.close_all()
+        if store is not None:
+            await store.close()
 
     app = FastAPI(
         title="VoxFlow Voice AI Runtime",

@@ -4,6 +4,7 @@ import uuid
 from typing import Any
 
 from app.config import Settings
+from app.memory.conversation import ConversationStore
 from app.runtime.errors import SessionNotFoundError
 from app.runtime.orchestrator import SessionRuntime
 
@@ -12,19 +13,26 @@ class SessionManager:
     """Registry and factory for live session runtimes.
 
     Sessions live in process memory keyed by ``session_id``. Each runtime owns
-    its event bus, state machine, audio gateway and cancellation scopes; the
-    manager is deliberately dumb (create/get/list/close) so the runtime can be
-    swapped for a redis-backed registry without touching the API layer.
+    its event bus, state machine, audio gateway, providers, tools and
+    cancellation scopes; the manager is deliberately dumb (create/get/list/
+    close) so the runtime can be swapped for a redis-backed registry without
+    touching the API layer.
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, conversation_store: ConversationStore | None = None) -> None:
         self.settings = settings
+        self._conversation_store = conversation_store
         self._sessions: dict[str, SessionRuntime] = {}
 
     def create_session(self) -> SessionRuntime:
         session_id = uuid.uuid4().hex
         conversation_id = uuid.uuid4().hex
-        runtime = SessionRuntime(session_id=session_id, conversation_id=conversation_id, settings=self.settings)
+        runtime = SessionRuntime(
+            session_id=session_id,
+            conversation_id=conversation_id,
+            settings=self.settings,
+            conversation_store=self._conversation_store,
+        )
         self._sessions[session_id] = runtime
         return runtime
 

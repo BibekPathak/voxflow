@@ -43,7 +43,10 @@ class OpenAILLMProvider:
                     }
                 )
             elif message.role == "assistant":
-                out.append({"role": "assistant", "content": message.content})
+                assistant: dict[str, object] = {"role": "assistant", "content": message.content}
+                if message.tool_calls:
+                    assistant["tool_calls"] = message.tool_calls
+                out.append(assistant)
             else:
                 out.append({"role": message.role, "content": message.content})
         return out

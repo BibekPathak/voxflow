@@ -8,9 +8,10 @@ from typing import Any, Protocol
 
 from app.audio.gateway import AudioGateway
 from app.config import Settings
+from app.memory.conversation import ConversationStore, HistoryEntry
 from app.observability.logging import get_logger, log_event
 from app.providers.factory import ProviderSet, build_providers
-from app.providers.types import AudioData, Transcript
+from app.providers.types import AudioData, ToolSpec, Transcript
 from app.runtime.cancellation import CancellationScope, TurnCancelled
 from app.runtime.errors import StateViolationError
 from app.runtime.event_bus import EventBus, EventSubscription
@@ -31,6 +32,8 @@ from app.runtime.events import (
 from app.runtime.pipeline import StreamingTurnPipeline
 from app.runtime.state_machine import RuntimeState, StateMachine
 from app.runtime.turn import TurnDetector, TurnDetectorParams
+from app.tools import load_builtin_tools
+from app.tools.registry import ToolRegistry
 
 _logger = get_logger("voxflow.runtime")
 
@@ -45,7 +48,7 @@ _STT_END = _SttEnd()
 class TurnContext:
     """Everything a pipeline needs to execute one user turn."""
 
-    __slots__ = ("session_id", "conversation_id", "turn_id", "text", "started_at")
+    __slots__ = ("session_id", "conversation_id", "turn_id", "text", "started_at", "response_text")
 
     def __init__(self, *, session_id: str, conversation_id: str, turn_id: int, text: str) -> None:
         self.session_id = session_id
@@ -53,6 +56,7 @@ class TurnContext:
         self.turn_id = turn_id
         self.text = text
         self.started_at = time.monotonic()
+        self.response_text = ""
 
 
 class TurnPipeline(Protocol):
@@ -100,11 +104,15 @@ class SessionRuntime:
         conversation_id: str,
         settings: Settings,
         providers: ProviderSet | None = None,
+        tools: ToolRegistry | None = None,
+        conversation_store: ConversationStore | None = None,
     ) -> None:
         self.session_id = session_id
         self.conversation_id = conversation_id
         self.settings = settings
         self.providers = providers if providers is not None else build_providers(settings)
+        self.tools = tools if tools is not None else load_builtin_tools()
+        self._store = conversation_store
 
         self.bus = EventBus(name=f"session:{session_id}", queue_maxsize=settings.audio_queue_maxsize)
         self.states = StateMachine(on_change=self._on_state_changed)
@@ -137,6 +145,7 @@ class SessionRuntime:
         self.pipeline: TurnPipeline = StreamingTurnPipeline()
 
         self.created_at = time.time()
+        self._history: list[HistoryEntry] = []
         self._audio_owner: str | None = None
         self._outbound: AudioOutbound | None = None
         self._closed = False
@@ -162,6 +171,16 @@ class SessionRuntime:
     @property
     def active_scope(self) -> CancellationScope | None:
         return self._active_scope
+
+    @property
+    def history(self) -> tuple[HistoryEntry, ...]:
+        return tuple(self._history)
+
+    def tool_specs(self) -> list[ToolSpec]:
+        return [
+            ToolSpec(name=definition.name, description=definition.description, parameters=definition.parameters)
+            for definition in self.tools.definitions()
+        ]
 
     def publish(self, event: VoiceEvent) -> None:
         self.bus.publish(event)
@@ -474,6 +493,7 @@ class SessionRuntime:
         try:
             await scope.run(self._run_pipeline(context))
             await scope.close()
+            await self._commit_turn(context)
             self._publish_turn_completed(turn_id, "completed")
         except TurnCancelled:
             self._publish_turn_completed(turn_id, "cancelled", reason="interrupted")
@@ -494,6 +514,36 @@ class SessionRuntime:
 
     async def _run_pipeline(self, context: TurnContext) -> None:
         await self.pipeline.handle(self, context)
+
+    async def _commit_turn(self, context: TurnContext) -> None:
+        user_text = context.text.strip()
+        if not user_text and not context.response_text:
+            return
+        self._history.append(HistoryEntry(role="user", content=user_text or "", turn_ordinal=context.turn_id))
+        if context.response_text.strip():
+            self._history.append(
+                HistoryEntry(role="assistant", content=context.response_text.strip(), turn_ordinal=context.turn_id)
+            )
+        if self._store is None or self.settings.persist_conversations is False:
+            return
+        try:
+            await self._store.add_message(
+                conversation_id=self.conversation_id,
+                session_id=self.session_id,
+                turn_ordinal=context.turn_id,
+                role="user",
+                content=user_text,
+            )
+            if context.response_text.strip():
+                await self._store.add_message(
+                    conversation_id=self.conversation_id,
+                    session_id=self.session_id,
+                    turn_ordinal=context.turn_id,
+                    role="assistant",
+                    content=context.response_text.strip(),
+                )
+        except Exception as exc:
+            _logger.warning("failed to persist turn", error=str(exc), session_id=self.session_id)
 
     def _publish_turn_completed(self, turn_id: int, outcome: str, *, reason: str | None = None) -> None:
         self.publish(

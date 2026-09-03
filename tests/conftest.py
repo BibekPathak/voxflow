@@ -22,6 +22,7 @@ def make_settings(**overrides: object) -> Settings:
         provider_stt="mock",
         provider_llm="mock",
         provider_tts="mock",
+        database_url="sqlite+aiosqlite:///:memory:",
     )
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]

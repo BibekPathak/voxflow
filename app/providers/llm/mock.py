@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import re
 from collections.abc import AsyncIterator, Sequence
 
@@ -55,6 +56,28 @@ class MockLLMProvider:
                 return tool_name
         return None
 
+    def _mock_arguments(self, tool_name: str, text: str) -> str:
+        lowered = text.lower()
+        args: dict[str, str | int] = {}
+        if tool_name == "search_customer":
+            email_match = re.search(r"[\w.+-]+@[\w.-]+", text)
+            if email_match:
+                args["email"] = email_match.group(0)
+        elif tool_name == "get_recent_transactions":
+            customer_match = re.search(r"cust_[0-9]+", text)
+            if customer_match:
+                args["customer_id"] = customer_match.group(0)
+        elif tool_name == "inspect_payment":
+            payment_match = re.search(r"pay_[0-9]+", text)
+            if payment_match:
+                args["payment_id"] = payment_match.group(0)
+            elif "payment" in lowered or "declined" in lowered:
+                args["payment_id"] = "pay_101"
+        elif tool_name == "create_support_ticket":
+            args["subject"] = text[:60]
+            args["description"] = text
+        return json.dumps(args)
+
     def _answer(self, messages: Sequence[LLMMessage], tool_result: bool) -> str:
         if tool_result:
             last_tool = next((m for m in reversed(messages) if m.role == "tool"), None)
@@ -102,7 +125,11 @@ class MockLLMProvider:
                 if self.first_token_ms:
                     await asyncio.sleep(self.first_token_ms / 1000.0)
                 call_id = f"call_mock_{next(self._calls)}"
-                yield LLMChunk(tool_call=LLMToolCallDelta(index=0, id=call_id, name=chosen, arguments="{}"))
+                yield LLMChunk(
+                    tool_call=LLMToolCallDelta(
+                        index=0, id=call_id, name=chosen, arguments=self._mock_arguments(chosen, user_text)
+                    )
+                )
                 yield LLMChunk(finish_reason="tool_calls")
                 return
 
