@@ -182,9 +182,10 @@ same interfaces; the runtime code never changes.
 ## 5. Tests
 
 ```bash
-uv run pytest                # 144 tests, provider-free
+uv run pytest                # full suite incl. concurrency & performance sanity
 uv run ruff check app tests
 uv run ruff format --check app tests
+uv run python scripts/load_test.py   # concurrent load harness (mock providers)
 ```
 
 Coverage includes: state-machine transitions (valid/invalid/terminal), VAD
@@ -228,6 +229,25 @@ interruption ≈ 1 ms, TTS cancellation ≈ 14 ms** (mock profile). Real provide
 numbers will be reported here once keyed runs are measured; `compare_reports`
 renders before/after tables for tuning.
 
+### Load & performance (measured, mock profile)
+
+Run with `uv run python scripts/load_test.py --concurrency 8 --turns 3`:
+
+| Metric | Result |
+| --- | --- |
+| Concurrent sessions | 8 |
+| Turns (3 per session) | 24 / 24 completed |
+| Errors / stale turns | 0 / 0 |
+| Wall time | 1853 ms |
+| Throughput | ~13 turns/second |
+
+The energy VAD + gateway alone ingested **128 s of audio in 36 ms (~3500×
+real time)** in the same environment, so the CPU/audio path is not the
+bottleneck at this scale — the runtime is bound by provider/network latency in
+production and by endpointing silence timers in the mock profile. A Rust audio
+component is therefore **not** justified by the current profiling; this would
+be revisited only if real workloads showed a CPU bottleneck.
+
 ---
 
 ## 7. Tradeoffs and decisions worth discussing
@@ -270,6 +290,6 @@ docker-compose.yml  backend + frontend + postgres + redis
 
 ## 9. Future work
 
-Load/concurrency testing, profiling, an optional Rust audio component only if
-benchmarks justify it, real-provider latency calibration, and replacing the
-energy VAD with a neural VAD behind the same interface.
+Profiling-driven tuning against real providers (AEC, echo path), a neural VAD
+behind the existing interface, WebRTC transport, and — only if benchmarks
+justify it — a native audio component.

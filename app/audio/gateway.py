@@ -31,6 +31,7 @@ class AudioGateway:
         *,
         sample_rate: int = 16_000,
         expected_channels: int = 1,
+        capture_audio: bool = False,
         vad_speech_start_rms: float = 0.015,
         vad_speech_end_rms: float = 0.010,
         vad_start_confirm_ms: int = 180,
@@ -39,6 +40,7 @@ class AudioGateway:
     ) -> None:
         self.sample_rate = sample_rate
         self.expected_channels = expected_channels
+        self.capture_audio = capture_audio
         self.vad = EnergyVAD(
             sample_rate=sample_rate,
             frame_ms=vad_frame_ms,
@@ -61,7 +63,8 @@ class AudioGateway:
         if mono.size == 0:
             return IngestResult(num_samples=0, rms=0.0, decisions=[])
         self.total_samples_in += mono.size
-        self.recording.append(mono)
+        if self.capture_audio:
+            self.recording.append(mono)
         level = rms(mono)
         decisions = self.vad.process(mono)
         return IngestResult(num_samples=int(mono.size), rms=level, decisions=decisions)
