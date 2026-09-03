@@ -177,6 +177,11 @@ async def test_barge_in_stops_agent_audio_without_stale_frames() -> None:
     tts_completed = _events_of(collector, EventType.TTS_COMPLETED)
     assert tts_completed and tts_completed[-1].reason == "cancelled"
 
+    metrics = runtime.metrics.snapshot()
+    assert metrics["counters"]["user_interrupts"] >= 1
+    assert metrics["latencies_ms"]["interruption"]["median"] is not None
+    assert metrics["latencies_ms"]["tts_cancellation"]["median"] is not None
+
     await _feed(runtime, _frames(silence_samples(0.3)))
     assert runtime.state is RuntimeState.LISTENING
     await runtime.detach("owner-a")

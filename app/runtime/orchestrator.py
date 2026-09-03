@@ -10,6 +10,7 @@ from app.audio.gateway import AudioGateway
 from app.config import Settings
 from app.memory.conversation import ConversationStore, HistoryEntry
 from app.observability.logging import get_logger, log_event
+from app.observability.metrics import MetricsCollector
 from app.providers.factory import ProviderSet, build_providers
 from app.providers.types import AudioData, ToolSpec, Transcript
 from app.runtime.cancellation import CancellationScope, TurnCancelled
@@ -142,6 +143,12 @@ class SessionRuntime:
             event_types=self.detector.handles(),
         )
 
+        self.metrics = MetricsCollector()
+        self._metrics_sub: EventSubscription = self.bus.subscribe(
+            self.metrics.on_event,
+            session_id=session_id,
+        )
+
         self.pipeline: TurnPipeline = StreamingTurnPipeline()
 
         self.created_at = time.time()
@@ -159,6 +166,7 @@ class SessionRuntime:
 
         self._stt_queue: asyncio.Queue[bytes | _SttEnd] | None = None
         self._stt_task: asyncio.Task[None] | None = None
+        self._last_speech_end_ts: float | None = None
 
     @property
     def state(self) -> RuntimeState:
@@ -240,6 +248,7 @@ class SessionRuntime:
         await self._cancel_active_scope()
         await self.detector.close()
         self._detector_sub.close()
+        self._metrics_sub.close()
         try:
             self.states.transition(RuntimeState.CLOSED, reason=reason)
         except StateViolationError:
@@ -377,6 +386,7 @@ class SessionRuntime:
             UserInterrupted(
                 session_id=self.session_id,
                 conversation_id=self.conversation_id,
+                turn_id=interrupted_turn,
                 interrupted_turn_id=interrupted_turn,
                 latency_ms=self._interruption_latency_ms(),
             )
@@ -387,6 +397,7 @@ class SessionRuntime:
         return None
 
     async def _on_speech_end(self, decision: Any) -> None:
+        self._last_speech_end_ts = time.time()
         self.publish(
             SpeechEnded(
                 session_id=self.session_id,
@@ -490,6 +501,7 @@ class SessionRuntime:
                 reason="stt_final",
             )
         )
+        self.metrics.register_turn(turn_id, speech_end_ts=self._last_speech_end_ts)
         try:
             await scope.run(self._run_pipeline(context))
             await scope.close()

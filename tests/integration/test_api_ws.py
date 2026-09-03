@@ -138,3 +138,16 @@ def test_session_list_returns_created_session() -> None:
         created = client.post("/sessions").json()
         listing = client.get("/sessions").json()
         assert any(s["session_id"] == created["session_id"] for s in listing)
+
+
+def test_session_metrics_endpoint_returns_snapshot() -> None:
+    with TestClient(create_app(make_settings())) as client:
+        session_id = client.post("/sessions").json()["session_id"]
+        response = client.get(f"/sessions/{session_id}/metrics")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["session_id"] == session_id
+        assert "latencies_ms" in body["metrics"]
+        assert "counters" in body["metrics"]
+        assert "ttfa" in body["metrics"]["latencies_ms"]
+        assert "e2e" in body["metrics"]["latencies_ms"]

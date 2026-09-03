@@ -36,6 +36,28 @@ async def get_session(request: Request, session_id: str) -> dict:
     return manager.snapshot(runtime)
 
 
+@router.get("/{session_id}/metrics")
+async def get_session_metrics(request: Request, session_id: str) -> dict:
+    manager = _manager(request)
+    runtime = manager.get(session_id)
+    metrics = runtime.metrics.snapshot()
+    detector = runtime.detector.stats
+    gateway = {
+        "speech_active": runtime.gateway.vad.speech_active,
+        "total_speech_ms": runtime.gateway.vad.total_speech_ms,
+        "total_samples_in": runtime.gateway.total_samples_in,
+        "dropped_frames": runtime.gateway.sequencer.total_gaps,
+        "missing_frames": runtime.gateway.sequencer.missing_frames,
+    }
+    return {
+        "session_id": session_id,
+        "conversation_id": runtime.conversation_id,
+        "metrics": metrics,
+        "detector": detector,
+        "gateway": gateway,
+    }
+
+
 @router.websocket("/{session_id}/events")
 async def session_events_ws(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
