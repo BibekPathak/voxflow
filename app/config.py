@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     provider_llm: Literal["mock", "openai"] = "mock"
     provider_tts: Literal["mock", "cartesia", "elevenlabs"] = "mock"
 
+    mock_llm_first_token_ms: float = 0.0
+    mock_llm_token_interval_ms: float = 0.0
+    mock_tts_first_audio_ms: float = 0.0
+
     deepgram_api_key: SecretStr | None = None
     deepgram_model: str = "nova-3"
     deepgram_endpoint: str = "wss://api.deepgram.com/v1/listen"
