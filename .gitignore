@@ -15,6 +15,10 @@ dist/
 *.db
 *.sqlite3
 
+# Evaluation artifacts (generated audio + benchmark reports)
+eval_audio/
+eval_reports/
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

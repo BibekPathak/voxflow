@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 import numpy as np
 
 from app.audio.resampling import float32_to_pcm16_bytes
+from app.providers.meta import ProviderInfo
 from app.providers.types import AudioData
 
 _MILLIS_PER_CHAR = 60.0
@@ -32,6 +33,11 @@ class MockTTSProvider:
 
     async def close(self) -> None:
         return None
+
+    def metadata(self) -> ProviderInfo:
+        return ProviderInfo(
+            name="mock", kind="tts", vendor="VoxFlow Mock", model="duration-proportional", streaming=True
+        )
 
     def _estimate_ms(self, text: str) -> float:
         if not text:

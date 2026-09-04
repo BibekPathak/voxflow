@@ -6,12 +6,29 @@ from app.config import Settings
 from app.providers.interfaces import LLMProvider, STTProvider, TTSProvider
 from app.providers.llm.mock import MockLLMProvider
 from app.providers.llm.openai import OpenAILLMProvider
+from app.providers.meta import ProviderInfo
 from app.providers.stt.deepgram import DeepgramSTTProvider
 from app.providers.stt.mock import MockSTTProvider
 from app.providers.tts.cartesia import CartesiaTTSProvider
 from app.providers.tts.elevenlabs import ElevenLabsTTSProvider
 from app.providers.tts.mock import MockTTSProvider
 from app.runtime.errors import ConfigurationError, ProviderUnavailableError
+
+
+def _info(provider: object) -> dict[str, object] | None:
+    accessor = getattr(provider, "metadata", None)
+    if callable(accessor):
+        value = accessor()
+        if isinstance(value, ProviderInfo):
+            return {
+                "name": value.name,
+                "vendor": value.vendor,
+                "model": value.model,
+                "streaming": value.streaming,
+                "voice_id": value.voice_id,
+                "endpoint": value.endpoint,
+            }
+    return None
 
 
 @dataclass(slots=True)
@@ -25,6 +42,13 @@ class ProviderSet:
             closer = getattr(provider, "close", None)
             if closer is not None:
                 await closer()
+
+    def describe(self) -> dict[str, dict[str, object] | None]:
+        return {"stt": _info(self.stt), "llm": _info(self.llm), "tts": _info(self.tts)}
+
+    @property
+    def uses_real_providers(self) -> bool:
+        return any((_info(p) or {}).get("name") not in ("mock", None) for p in (self.stt, self.llm, self.tts))
 
 
 def _require(secret: str | None, name: str) -> str:
@@ -108,3 +132,28 @@ def build_providers(settings: Settings) -> ProviderSet:
     """Build the configured provider set (mock by default; real adapters when
     the matching ``PROVIDER_*`` value is set and the key is present)."""
     return ProviderSet(stt=_build_stt(settings), llm=_build_llm(settings), tts=_build_tts(settings))
+
+
+def provider_fingerprint(settings: Settings) -> dict[str, object]:
+    """Non-secret configuration fingerprint recorded in benchmark reports so
+    results can be reproduced and compared across runs. API keys are excluded."""
+
+    def tts_voice(key: str | None) -> str:
+        return f"<{key[:4]}...>" if key else None
+
+    return {
+        "provider_stt": settings.provider_stt,
+        "stt_model": settings.deepgram_model if settings.provider_stt == "deepgram" else None,
+        "provider_llm": settings.provider_llm,
+        "llm_model": settings.openai_llm_model if settings.provider_llm == "openai" else None,
+        "provider_tts": settings.provider_tts,
+        "tts_model": settings.cartesia_model
+        if settings.provider_tts == "cartesia"
+        else (settings.elevenlabs_model if settings.provider_tts == "elevenlabs" else None),
+        "tts_voice_id": tts_voice(
+            settings.cartesia_voice_id if settings.provider_tts == "cartesia" else settings.elevenlabs_voice_id
+        ),
+        "sample_rate": settings.sample_rate,
+        "turn_silence_ms": settings.turn_silence_ms,
+        "turn_max_utterance_s": settings.turn_max_utterance_s,
+    }

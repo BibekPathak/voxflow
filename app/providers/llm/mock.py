@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Sequence
 
+from app.providers.meta import ProviderInfo
 from app.providers.types import LLMChunk, LLMMessage, LLMToolCallDelta, ToolSpec
 
 _TOKEN_SPLIT = re.compile(r"\S+\s*")
@@ -46,6 +47,9 @@ class MockLLMProvider:
 
     async def close(self) -> None:
         return None
+
+    def metadata(self) -> ProviderInfo:
+        return ProviderInfo(name="mock", kind="llm", vendor="VoxFlow Mock", model="rule-based", streaming=True)
 
     def _pick_tool(self, text: str, tools: Sequence[ToolSpec]) -> str | None:
         offered = {tool.name for tool in tools}

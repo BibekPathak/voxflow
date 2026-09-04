@@ -10,6 +10,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
+from app.providers.meta import ProviderInfo
 from app.providers.types import AudioData
 
 
@@ -40,6 +41,17 @@ class CartesiaTTSProvider:
 
     async def close(self) -> None:
         return None
+
+    def metadata(self) -> ProviderInfo:
+        return ProviderInfo(
+            name="cartesia",
+            kind="tts",
+            vendor="Cartesia",
+            model=self.model_id,
+            streaming=True,
+            voice_id=self.voice_id,
+            endpoint=self.url,
+        )
 
     def _connect_url(self) -> str:
         parts = urlsplit(self.url)

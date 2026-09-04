@@ -8,6 +8,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
+from app.providers.meta import ProviderInfo
 from app.providers.types import Transcript
 
 
@@ -36,6 +37,16 @@ class DeepgramSTTProvider:
 
     async def close(self) -> None:
         return None
+
+    def metadata(self) -> ProviderInfo:
+        return ProviderInfo(
+            name="deepgram",
+            kind="stt",
+            vendor="Deepgram",
+            model=self.model,
+            streaming=True,
+            endpoint=self.endpoint,
+        )
 
     def _listen_url(self, *, sample_rate: int, interim_results: bool, language: str | None) -> str:
         query = urlencode(

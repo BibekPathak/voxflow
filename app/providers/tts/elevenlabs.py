@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from app.providers.meta import ProviderInfo
 from app.providers.types import AudioData
 
 
@@ -35,6 +36,17 @@ class ElevenLabsTTSProvider:
 
     async def close(self) -> None:
         return None
+
+    def metadata(self) -> ProviderInfo:
+        return ProviderInfo(
+            name="elevenlabs",
+            kind="tts",
+            vendor="ElevenLabs",
+            model=self.model_id,
+            streaming=True,
+            voice_id=self.voice_id,
+            endpoint=self.base_url,
+        )
 
     async def synthesize_stream(
         self,

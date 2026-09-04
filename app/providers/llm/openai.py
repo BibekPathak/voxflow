@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Sequence
 
 from openai import AsyncOpenAI
 
+from app.providers.meta import ProviderInfo
 from app.providers.types import LLMChunk, LLMMessage, LLMToolCallDelta, ToolSpec
 
 
@@ -30,6 +31,16 @@ class OpenAILLMProvider:
 
     async def close(self) -> None:
         return None
+
+    def metadata(self) -> ProviderInfo:
+        return ProviderInfo(
+            name="openai",
+            kind="llm",
+            vendor="OpenAI",
+            model=self.model,
+            streaming=True,
+            endpoint=self.base_url,
+        )
 
     def _messages(self, messages: Sequence[LLMMessage]) -> list[dict[str, object]]:
         out: list[dict[str, object]] = []

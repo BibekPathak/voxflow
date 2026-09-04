@@ -1,5 +1,7 @@
 # VoxFlow — Real-Time Voice AI Agent Runtime
 
+**Streaming STT · Turn Detection · Barge-In · Cancellation · Tool Calling · Voice Evaluation**
+
 VoxFlow is a small but credible **voice AI runtime/platform** — not a "connect an
 STT API to an LLM API" chatbot wrapper. It is an asynchronous, event-driven
 engine for low-latency spoken conversation: streaming audio both directions,
@@ -140,6 +142,23 @@ with median + P95 aggregation, exposed at `GET /sessions/{id}/metrics`.
 real VAD/endpointing/barge-in) and inject transcripts, then assert voice
 behavior and read back measured latencies.
 
+### The five problems this solves
+
+1. **Latency** — a voice agent can't wait for a full response before speaking,
+   so every stage is streamed and TTFT / TTFA / E2E are measured per turn.
+2. **Turn-taking** — VAD alone isn't enough because silence doesn't mean the
+   user finished; endpointing combines VAD with STT state, minimum speech
+   duration and silence windows.
+3. **Barge-in** — when the user interrupts, the entire turn scope is cancelled
+   and its turn id invalidated, so stale TTS/audio can never leak into the next
+   turn.
+4. **Concurrency** — audio ingestion, STT, LLM, TTS and event delivery run
+   concurrently, which forces explicit lifecycle, ordering and cancellation
+   semantics.
+5. **Evaluation** — instead of judging the agent by hand, scripted scenarios
+   cover interruption, endpointing, tool failure, backchanneling and network
+   degradation, with real measured numbers.
+
 ---
 
 ## 4. Setup
@@ -248,6 +267,43 @@ production and by endpointing silence timers in the mock profile. A Rust audio
 component is therefore **not** justified by the current profiling; this would
 be revisited only if real workloads showed a CPU bottleneck.
 
+### Real Provider Benchmark
+
+The mock numbers above are excellent for a deterministic, key-free runtime, but
+they are **not** representative of production providers — a voice-agent
+recruiter will immediately know that. To validate against reality, VoxFlow
+includes a real-provider benchmark that drives the **same runtime** end to end:
+TTS-generated spoken prompts → real streaming STT → streaming LLM → tool calls →
+streaming TTS → playback.
+
+```bash
+# requires real keys: PROVIDER_STT=deepgram, PROVIDER_LLM=openai,
+# PROVIDER_TTS=cartesia (or elevenlabs) + matching voice IDs in .env
+uv run python scripts/benchmark_real.py --turns 40
+uv run python scripts/benchmark_real.py --turns 40 --tts elevenlabs   # compare TTS
+uv run python scripts/benchmark_real.py --tts mock                    # re-measure baseline
+```
+
+The prompts are synthesized once via TTS and cached under `eval_audio/` so runs
+don't re-hit the provider; reports (JSON + Markdown) write to `eval_reports/`
+with the exact provider/model/config fingerprint beside the latency results.
+
+**Measured comparison.** Real numbers must be produced by a keyed run on your
+machine; the Mock rows are the values measured above. The table is what you
+(and a recruiter) come back to:
+
+| Metric | Mock | Real |
+| --- | --- | --- |
+| TTFT | 1 ms | *measure* ms |
+| TTFA | 20 ms | *measure* ms |
+| E2E | 344 ms | *measure* ms |
+| Barge-in | 1 ms | *measure* ms |
+| TTS cancellation | 14 ms | *measure* ms |
+
+Percentiles (P50/P95) for TTFT / TTFA / E2E / interruption are recorded per run
+in the report, enabling provider-choice and tuning decisions driven by
+measurement rather than opinion.
+
 ---
 
 ## 7. Tradeoffs and decisions worth discussing
@@ -277,12 +333,15 @@ app/
   api/            FastAPI routes: sessions, audio WS, events WS, metrics, evaluations
   runtime/        orchestrator, state machine, event bus, cancellation, turn, pipeline
   audio/          gateway, VAD, buffering, resampling
-  providers/      stt|llm|tts protocols, mocks, real adapters, factory
+  providers/      stt|llm|tts protocols, mocks, real adapters, factory, metadata
   tools/          registry + support tools + demo data
   memory/         context window, SQLAlchemy store
   observability/  logging, metrics ledger
-  evaluation/     harness, scenarios, runner, reports
+  evaluation/     harness, scenarios, runner, reports, real-provider benchmark
 frontend/         React + Vite dashboard with mic capture/playback
+scripts/
+  load_test.py          concurrent load harness
+  benchmark_real.py     real-provider latency benchmark
 tests/            unit | integration | evaluation
 docker-compose.yml  backend + frontend + postgres + redis
 .env.example      all configuration

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from app.audio.resampling import pcm16_bytes_to_float32, rms
+from app.providers.meta import ProviderInfo
 from app.providers.types import Transcript
 
 DEFAULT_SCRIPT = [
@@ -44,6 +45,9 @@ class MockSTTProvider:
 
     async def close(self) -> None:
         return None
+
+    def metadata(self) -> ProviderInfo:
+        return ProviderInfo(name="mock", kind="stt", vendor="VoxFlow Mock", model="scripted", streaming=True)
 
     async def transcribe_stream(
         self,

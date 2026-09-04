@@ -24,16 +24,29 @@ def _pct(sorted_values: list[float], percentile: float) -> float | None:
     return sorted_values[index]
 
 
-def _aggregate(values: list[float]) -> dict[str, float | None]:
+def latency_aggregate(
+    values: list[float], *, percentiles: tuple[float, ...] = (50.0, 95.0)
+) -> dict[str, float | int | None]:
+    """Aggregate raw latency samples (ms) with median and arbitrary percentiles.
+
+    Reused by both the per-session metrics snapshot and the benchmark harness so
+    the P50/P95 definitions match everywhere.
+    """
     clean = [v for v in values if v is not None and v >= 0]
     if not clean:
         return {"median": None, "p95": None, "n": 0}
     ordered = sorted(clean)
-    return {
-        "median": round(statistics.median(clean), 2),
-        "p95": round(_pct(ordered, 0.95) or 0.0, 2),
-        "n": len(clean),
-    }
+    result: dict[str, float | int | None] = {"median": round(statistics.median(clean), 2), "n": len(clean)}
+    for percentile in percentiles:
+        result[f"p{int(percentile):03d}"] = round(_pct(ordered, percentile / 100.0) or 0.0, 2)
+    if "p095" in result:
+        result["p95"] = result.pop("p095")
+    return result
+
+
+def _aggregate(values: list[float]) -> dict[str, float | None]:
+    aggregated = latency_aggregate(values)
+    return {"median": aggregated["median"], "p95": aggregated.get("p95"), "n": int(aggregated["n"])}
 
 
 def _ms(since: float, now: float) -> float:
